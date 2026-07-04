@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Webowy Pomiar Prędkości Aut</title>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
+
+    <style>
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #111;
+            color: white;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            overflow: hidden;
+        }
+        #container {
+            position: relative;
+            width: 100%;
+            max-width: 640px;
+            aspect-ratio: 4/3;
+        }
+        video, canvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            border-radius: 8px;
+        }
+        canvas {
+            z-index: 10;
+        }
+        #status {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0,0,0,0.7);
+            padding: 8px 12px;
+            border-radius: 4px;
+            font-size: 14px;
+            z-index: 20;
+        }
+        #controls {
+            margin-top: 15px;
+            display: flex;
+            gap: 10px;
+            z-index: 20;
+        }
+        input {
+            width: 60px;
+            padding: 5px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+
+    <div id="status">Inicjalizacja systemu...</div>
+
+    <div id="container">
+        <video id="webcam" autoplay playsinline muted></video>
+        <canvas id="canvas"></canvas>
+    </div>
+
+    <div id="controls">
+        <label>Dystans linii (metry): 
+            <input type="number" id="distanceInput" value="5" min="1">
+        </label>
+    </div>
+
+<script>
+const video = document.getElementById('webcam');
+const canvas = document.getElementById('canvas');
+const ctx = canvas.getContext('2d');
+const statusDiv = document.getElementById('status');
+const distanceInput = document.getElementById('distanceInput');
+
+let model = null;
+let trackedObjects = {}; // Przechowywanie historii pozycji aut
+let nextId = 0;
+
+// Definicja linii wirtualnych (procentowo od góry ekranu: 40% i 70%)
+const LINE_START_PCT = 0.40;
+const LINE_END_PCT = 0.70;
+
+async function init() {
+    statusDiv.innerText = "Ładowanie modelu AI (może to chwilę potrwać)...";
+    try {
+        model = await cocoSsd.load();
+        statusDiv.innerText = "Model załadowany. Uruchamianie kamery...";
+        
+        const stream = await navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'environment', width: { ideal: 640 }, height: { ideal: 480 } },
+            audio: false
+        });
+        video.srcObject = stream;
+        
+        video.onloadedmetadata = () => {
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            statusDiv.innerText = "System działa. Szukam samochodów...";
+            detectFrame();
+        };
+    } catch (err) {
+        statusDiv.innerText = "Błąd: " + err.message;
+        console.error(err);
+    }
+}
+
+async function detectFrame() {
+    if (!model) return;
+
+    const predictions = await model.detect(video);
+    
+    // Czyszczenie canvasu
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // Rysowanie linii pomiarowych
+    const yStart = canvas.height * LINE_START_PCT;
+    const yEnd = canvas.height * LINE_END_PCT;
+    
+    ctx.strokeStyle = "lime"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(0, yStart); ctx.lineTo(canvas.width, yStart); ctx.stroke();
+    
+    ctx.strokeStyle = "red"; ctx.lineWidth = 3;
+    ctx.beginPath(); ctx.moveTo(0, yEnd); ctx.lineTo(canvas.width, yEnd); ctx.stroke();
+
+    // Filtrowanie tylko pojazdów
+    const currentCars = predictions.filter(p => ['car', 'truck', 'bus', 'motorcycle'].includes(p.class));
+    
+    let currentFrameObjects = [];
+
+    currentCars.forEach(car => {
+        const [x, y, width, height] = car.bbox;
+        const centerX = x + width / 2;
+        const centerY = y + height / 2;
+
+        // Rysowanie ramki wokół auta
+        ctx.strokeStyle = "#00ffff";
+        ctx.lineWidth = 2;
+        ctx.strokeRect(x, y, width, height);
+
+        // Kropka środkowa pojazdu
+        ctx.fillStyle = "#00ffff";
+        ctx.beginPath();
+        ctx.arc(centerX, centerY, 5, 0, 2 * Math.PI);
+        ctx.fill();
+
+        currentFrameObjects.push({ centerX, centerY, bbox: car.bbox });
+    });
+
+    // Bardzo uproszczony algorytm trackingu (szukanie najbliższego punktu z poprzedniej klatki)
+    let newTrackedObjects = {};
+    
+    currentFrameObjects.forEach(obj => {
+        let matchId = null;
+        let minDistance = 50; // Maksymalny dystans w pikselach między klatkami
+
+        Object.keys(trackedObjects).forEach(id => {
+            const prevObj = trackedObjects[id];
+            const dist = Math.hypot(obj.centerX - prevObj.centerX, obj.centerY - prevObj.centerY);
+            if (dist < minDistance) {
+                minDistance = dist;
+                matchId = id;
+            }
+        });
+
+        const now = performance.now();
+
+        if (matchId !== null) {
+            // Kontynuacja śledzenia
+            newTrackedObjects[matchId] = {
+                centerX: obj.centerX,
+                centerY: obj.centerY,
+                tStart: trackedObjects[matchId].tStart,
+                speed: trackedObjects[matchId].speed,
+                passedStart: trackedObjects[matchId].passedStart
+            };
+
+            let currentTrack = newTrackedObjects[matchId];
+
+            // Logika przekraczania linii (zakładamy ruch z góry do dołu)
+            if (!currentTrack.passedStart && obj.centerY >= yStart && obj.centerY < yEnd) {
+                currentTrack.passedStart = true;
+                currentTrack.tStart = now;
+            } 
+            
+            if (currentTrack.passedStart && obj.centerY >= yEnd && currentTrack.speed === null) {
+                const tEnd = now;
+                const durationSeconds = (tEnd - currentTrack.tStart) / 1000;
+                
+                if (durationSeconds > 0.1) { // ochrona przed błędami skoków detekcji
+                    const distanceMeters = parseFloat(distanceInput.value);
+                    // v = s / t -> m/s * 3.6 = km/h
+                    const speedKmH = (distanceMeters / durationSeconds) * 3.6;
+                    currentTrack.speed = speedKmH.toFixed(1);
+                }
+            }
+
+            // Wyświetlanie wyniku nad autem
+            if (currentTrack.speed) {
+                ctx.fillStyle = "yellow";
+                ctx.font = "bold 20px Arial";
+                ctx.fillText(`${currentTrack.speed} km/h`, obj.bbox[0], obj.bbox[1] - 10);
+            } else if (currentTrack.passedStart) {
+                ctx.fillStyle = "lime";
+                ctx.font = "14px Arial";
+                ctx.fillText("Mierzę...", obj.bbox[0], obj.bbox[1] - 10);
+            }
+
+        } else {
+            // Nowy obiekt
+            newTrackedObjects[nextId++] = {
+                centerX: obj.centerX,
+                centerY: obj.centerY,
+                tStart: null,
+                speed: null,
+                passedStart: false
+            };
+        }
+    });
+
+    trackedObjects = newTrackedObjects;
+
+    // Pętla animacji
+    requestAnimationFrame(detectFrame);
+}
+
+// Uruchomienie aplikacji po załadowaniu strony
+window.onload = init;
+</script>
+</body>
+</html>
