@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Webowy Pomiar Prędkości Aut - Duży Ekran</title>
+    <title>Niezawodny Pomiar Prędkości Aut</title>
     
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
@@ -11,106 +11,62 @@
     <style>
         body {
             margin: 0;
-            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            font-family: Arial, sans-serif;
             background: #111;
             color: white;
             display: flex;
             flex-direction: column;
             align-items: center;
-            justify-content: flex-start;
-            min-height: 100vh;
             padding: 20px;
-            box-sizing: border-box;
         }
-        
         #interface-wrapper {
             width: 100%;
-            max-width: 1024px; /* Zwiększony limit dla dużych ekranów */
+            max-width: 1024px;
             display: flex;
             flex-direction: column;
             gap: 15px;
         }
-
         #container {
             position: relative;
             width: 100%;
             background: #000;
             border-radius: 12px;
             overflow: hidden;
-            box-shadow: 0 10px 30px rgba(0,0,0,0.5);
         }
-
         video, canvas {
             width: 100%;
             height: auto;
             display: block;
         }
-
         canvas {
             position: absolute;
             top: 0;
             left: 0;
             z-index: 10;
-            pointer-events: none; /* Kliknięcia przechodzą przez canvas */
         }
-
         #dashboard {
             display: flex;
             justify-content: space-between;
-            align-items: center;
             background: rgba(30, 30, 30, 0.9);
-            padding: 15px 20px;
+            padding: 15px;
             border-radius: 8px;
-            font-size: 14px;
-            flex-wrap: wrap;
-            gap: 15px;
         }
-
-        .status-badge {
-            background: #222;
-            padding: 6px 12px;
-            border-radius: 20px;
-            border: 1px solid #444;
-            color: #00ffff;
-        }
-
-        .controls-group {
-            display: flex;
-            align-items: center;
-            gap: 15px;
-        }
-
-        label {
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            font-weight: bold;
-        }
-
+        .status-badge { color: #00ffff; font-weight: bold; }
         input, select {
-            background: #333;
-            color: white;
-            border: 1px solid #555;
-            padding: 6px 10px;
-            border-radius: 4px;
-            font-size: 14px;
+            background: #333; color: white; border: 1px solid #555;
+            padding: 6px; border-radius: 4px;
         }
-        
-        input { width: 60px; text-align: center; }
+        input { width: 50px; text-align: center; }
     </style>
 </head>
 <body>
 
     <div id="interface-wrapper">
         <div id="dashboard">
-            <div id="status" class="status-badge">Inicjalizacja systemu...</div>
-            
-            <div class="controls-group">
-                <label>Dystans (m): 
-                    <input type="number" id="distanceInput" value="5" min="1">
-                </label>
-                
-                <label>Kierunek ruchu: 
+            <div id="status" class="status-badge">Inicjalizacja...</div>
+            <div>
+                <label>Dystans (m): <input type="number" id="distanceInput" value="5"></label>
+                <label> Kierunek: 
                     <select id="directionInput">
                         <option value="down">Z góry do dołu ↓</option>
                         <option value="up">Z dołu do góry ↑</option>
@@ -137,9 +93,8 @@ let model = null;
 let trackedObjects = {}; 
 let nextId = 0;
 
-// Procentowe położenie linii na ekranie (zielona i czerwona)
-const LINE_1_PCT = 0.35;
-const LINE_2_PCT = 0.75;
+const LINE_1_PCT = 0.35; // Zielona (Start dla ruchu w dół)
+const LINE_2_PCT = 0.70; // Czerwona (Meta dla ruchu w dół)
 
 async function init() {
     statusDiv.innerText = "Ładowanie modelu AI...";
@@ -147,7 +102,6 @@ async function init() {
         model = await cocoSsd.load();
         statusDiv.innerText = "Uruchamianie kamery...";
         
-        // Na dużym ekranie prosimy o wyższą rozdzielczość (FullHD lub HD)
         const stream = await navigator.mediaDevices.getUserMedia({
             video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
             audio: false
@@ -155,14 +109,160 @@ async function init() {
         video.srcObject = stream;
         
         video.onloadedmetadata = () => {
-            resizeCanvas();
-            statusDiv.innerText = "System gotowy. Szukam aut...";
+            canvas.width = video.videoWidth;
+            canvas.height = video.videoHeight;
+            statusDiv.innerText = "Szukam samochodów...";
             detectFrame();
         };
     } catch (err) {
         statusDiv.innerText = "Błąd: " + err.message;
-        console.error(err);
     }
 }
 
-// Funkcja dopasowująca rozmi
+async function detectFrame() {
+    if (!model || video.paused || video.ended) return;
+
+    const predictions = await model.detect(video);
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    const yLine1 = canvas.height * LINE_1_PCT;
+    const yLine2 = canvas.height * LINE_2_PCT;
+    const direction = directionInput.value;
+
+    // Rysowanie linii strefy pomiarowej
+    ctx.lineWidth = 4;
+    ctx.font = "bold 16px Arial";
+    
+    ctx.strokeStyle = (direction === 'down') ? "lime" : "red";
+    ctx.beginPath(); ctx.moveTo(0, yLine1); ctx.lineTo(canvas.width, yLine1); ctx.stroke();
+    ctx.fillStyle = ctx.strokeStyle; ctx.fillText(direction === 'down' ? "START" : "META", 10, yLine1 - 10);
+    
+    ctx.strokeStyle = (direction === 'down') ? "red" : "lime";
+    ctx.beginPath(); ctx.moveTo(0, yLine2); ctx.lineTo(canvas.width, yLine2); ctx.stroke();
+    ctx.fillStyle = ctx.strokeStyle; ctx.fillText(direction === 'down' ? "META" : "START", 10, yLine2 - 10);
+
+    // Wykrywanie aut
+    const currentCars = predictions.filter(p => ['car', 'truck', 'bus', 'motorcycle'].includes(p.class));
+    let currentFrameObjects = [];
+
+    currentCars.forEach(car => {
+        const [x, y, width, height] = car.bbox;
+        const centerX = x + width / 2;
+        const centerY = y + height / 2;
+
+        ctx.strokeStyle = "#00ffff"; ctx.lineWidth = 3;
+        ctx.strokeRect(x, y, width, height);
+        ctx.fillStyle = "#00ffff"; ctx.beginPath(); ctx.arc(centerX, centerY, 6, 0, 2 * Math.PI); ctx.fill();
+
+        currentFrameObjects.push({ centerX, centerY, bbox: car.bbox });
+    });
+
+    const now = performance.now();
+    let updatedTrackedObjects = {};
+
+    // 1. Dopasowywanie wykrytych obiektów do istniejących śladów
+    currentFrameObjects.forEach(obj => {
+        let matchId = null;
+        let minDistance = 120; // Zwiększony margines ruchu między klatkami
+
+        Object.keys(trackedObjects).forEach(id => {
+            const prevObj = trackedObjects[id];
+            const dist = Math.hypot(obj.centerX - prevObj.centerX, obj.centerY - prevObj.centerY);
+            if (dist < minDistance) {
+                minDistance = dist;
+                matchId = id;
+            }
+        });
+
+        if (matchId !== null) {
+            // Kontynuacja śledzenia starego obiektu
+            updatedTrackedObjects[matchId] = {
+                centerX: obj.centerX,
+                centerY: obj.centerY,
+                bbox: obj.bbox,
+                tStart: trackedObjects[matchId].tStart,
+                speed: trackedObjects[matchId].speed,
+                passedStart: trackedObjects[matchId].passedStart,
+                lastSeen: now
+            };
+            delete trackedObjects[matchId]; // Usuwamy z tymczasowej listy, bo zaktualizowany
+        } else {
+            // Nowy obiekt
+            updatedTrackedObjects[nextId++] = {
+                centerX: obj.centerX,
+                centerY: obj.centerY,
+                bbox: obj.bbox,
+                tStart: null,
+                speed: null,
+                passedStart: false,
+                lastSeen: now
+            };
+        }
+    });
+
+    // 2. Przenoszenie obiektów, które zniknęły na chwilę (bufor pamięci na 10 klatek / ok. 300ms)
+    Object.keys(trackedObjects).forEach(id => {
+        const deadObj = trackedObjects[id];
+        if (now - deadObj.lastSeen < 350) { 
+            updatedTrackedObjects[id] = deadObj; 
+        }
+    });
+
+    trackedObjects = updatedTrackedObjects;
+
+    // 3. Logika obliczania prędkości dla aktualnych obiektów
+    Object.keys(trackedObjects).forEach(id => {
+        let track = trackedObjects[id];
+        
+        // Pomijamy obiekty niewidoczne w tej klatce przy rysowaniu tekstu
+        if (now - track.lastSeen > 50) return; 
+
+        // RUCH Z GÓRY DO DOŁU
+        if (direction === 'down') {
+            if (!track.passedStart && track.centerY >= yLine1 && track.centerY < yLine2) {
+                track.passedStart = true;
+                track.tStart = now;
+            }
+            // Zmiana: ">= yLine2" zamiast idealnego trafienia. Jeśli minął linię, kończymy pomiar.
+            if (track.passedStart && track.centerY >= yLine2 && track.speed === null) {
+                calculateSpeed(track, now);
+            }
+        } 
+        // RUCH Z DOŁU DO GÓRY
+        else {
+            if (!track.passedStart && track.centerY <= yLine2 && track.centerY > yLine1) {
+                track.passedStart = true;
+                track.tStart = now;
+            }
+            if (track.passedStart && track.centerY <= yLine1 && track.speed === null) {
+                calculateSpeed(track, now);
+            }
+        }
+
+        // Wyświetlanie statusu/prędkości nad autem
+        if (track.speed) {
+            ctx.fillStyle = "#fffb00"; ctx.font = "bold 26px Arial";
+            ctx.fillText(`${track.speed} km/h`, track.bbox[0], track.bbox[1] - 12);
+        } else if (track.passedStart) {
+            ctx.fillStyle = "lime"; ctx.font = "bold 16px Arial";
+            ctx.fillText("POMIAR...", track.bbox[0], track.bbox[1] - 12);
+        }
+    });
+
+    requestAnimationFrame(detectFrame);
+}
+
+function calculateSpeed(track, endTime) {
+    const durationSeconds = (endTime - track.tStart) / 1000;
+    // Ochrona przed nierealistycznie szybkim czasem (np. błąd przeskoku ramki)
+    if (durationSeconds > 0.08) { 
+        const distanceMeters = parseFloat(distanceInput.value);
+        const speedKmH = (distanceMeters / durationSeconds) * 3.6;
+        track.speed = speedKmH.toFixed(1);
+    }
+}
+
+window.onload = init;
+</script>
+</body>
+</html>
