@@ -1,268 +1,242 @@
 <!DOCTYPE html>
-<html lang="pl">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Niezawodny Pomiar Prędkości Aut</title>
-    
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs"></script>
-    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/coco-ssd"></script>
-
+    <title>AI Thinking Matrix</title>
     <style>
         body {
             margin: 0;
-            font-family: Arial, sans-serif;
-            background: #111;
-            color: white;
+            background-color: #05070f;
             display: flex;
             flex-direction: column;
             align-items: center;
-            padding: 20px;
-        }
-        #interface-wrapper {
-            width: 100%;
-            max-width: 1024px;
-            display: flex;
-            flex-direction: column;
-            gap: 15px;
-        }
-        #container {
-            position: relative;
-            width: 100%;
-            background: #000;
-            border-radius: 12px;
+            justify-content: center;
+            min-height: 100vh;
+            font-family: 'Courier New', Courier, monospace;
             overflow: hidden;
         }
-        video, canvas {
-            width: 100%;
-            height: auto;
-            display: block;
-        }
-        canvas {
-            position: absolute;
-            top: 0;
-            left: 0;
-            z-index: 10;
-        }
-        #dashboard {
+
+        .container {
             display: flex;
-            justify-content: space-between;
-            background: rgba(30, 30, 30, 0.9);
-            padding: 15px;
-            border-radius: 8px;
+            flex-direction: column;
+            align-items: center;
+            position: relative;
         }
-        .status-badge { color: #00ffff; font-weight: bold; }
-        input, select {
-            background: #333; color: white; border: 1px solid #555;
-            padding: 6px; border-radius: 4px;
+
+        canvas {
+            background: transparent;
+            border-radius: 50%;
+            box-shadow: 0 0 60px rgba(0, 231, 255, 0.05);
         }
-        input { width: 50px; text-align: center; }
+
+        .status-box {
+            margin-top: 20px;
+            height: 24px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .status-text {
+            color: #00e7ff;
+            font-size: 14px;
+            letter-spacing: 2px;
+            text-transform: uppercase;
+            opacity: 0;
+            animation: pulse-text 1.5s ease-in-out infinite alternate;
+            text-shadow: 0 0 8px rgba(0, 231, 255, 0.5);
+        }
+
+        @keyframes pulse-text {
+            0% { opacity: 0.3; }
+            100% { opacity: 1; }
+        }
     </style>
 </head>
 <body>
 
-    <div id="interface-wrapper">
-        <div id="dashboard">
-            <div id="status" class="status-badge">Inicjalizacja...</div>
-            <div>
-                <label>Dystans (m): <input type="number" id="distanceInput" value="5"></label>
-                <label> Kierunek: 
-                    <select id="directionInput">
-                        <option value="down">Z góry do dołu ↓</option>
-                        <option value="up">Z dołu do góry ↑</option>
-                    </select>
-                </label>
-            </div>
-        </div>
-
-        <div id="container">
-            <video id="webcam" autoplay playsinline muted></video>
-            <canvas id="canvas"></canvas>
-        </div>
+<div class="container">
+    <canvas id="thinkingCanvas" width="800" height="800"></canvas>
+    <div class="status-box">
+        <span id="statusText" class="status-text">Initializing Neural Network...</span>
     </div>
+</div>
 
 <script>
-const video = document.getElementById('webcam');
-const canvas = document.getElementById('canvas');
-const ctx = canvas.getContext('2d');
-const statusDiv = document.getElementById('status');
-const distanceInput = document.getElementById('distanceInput');
-const directionInput = document.getElementById('directionInput');
+    const canvas = document.getElementById('thinkingCanvas');
+    const ctx = canvas.getContext('2d');
+    const statusText = document.getElementById('statusText');
 
-let model = null;
-let trackedObjects = {}; 
-let nextId = 0;
+    const WIDTH = canvas.width;
+    const HEIGHT = canvas.height;
+    const CX = WIDTH / 2;
+    const CY = HEIGHT / 2;
+    const RADIUS = 280; // Orb radius
+    const FOV = 400;    // Field of view for 3D projection
 
-const LINE_1_PCT = 0.35; // Zielona (Start dla ruchu w dół)
-const LINE_2_PCT = 0.70; // Czerwona (Meta dla ruchu w dół)
+    // Configuration
+    const DOT_COUNT = 600;
+    const dots = [];
+    
+    // Fake tasks for the status ticker
+    const tasks = [
+        "Analyzing context tokens...",
+        "Querying latent space...",
+        "Searching vector database...",
+        "Evaluating weights & biases...",
+        "Synthesizing cross-attentions...",
+        "Filtering hallucinations...",
+        "Optimizing response structure..."
+    ];
+    let taskIndex = 0;
 
-async function init() {
-    statusDiv.innerText = "Ładowanie modelu AI...";
-    try {
-        model = await cocoSsd.load();
-        statusDiv.innerText = "Uruchamianie kamery...";
-        
-        const stream = await navigator.mediaDevices.getUserMedia({
-            video: { facingMode: 'environment', width: { ideal: 1280 }, height: { ideal: 720 } },
-            audio: false
+    // Pulse settings
+    let pulseProgress = 0;
+    const pulseSpeed = 0.015;
+
+    // Rotation angles
+    let angleX = 0;
+    let angleY = 0;
+    const speedX = 0.003;
+    const speedY = 0.005;
+
+    // Generate uniformly distributed points on a sphere using Fibonacci Lattice
+    for (let i = 0; i < DOT_COUNT; i++) {
+        const phi = Math.acos(1 - 2 * (i + 0.5) / DOT_COUNT);
+        const theta = Math.PI * (1 + Math.sqrt(5)) * (i + 0.5);
+
+        dots.push({
+            x: RADIUS * Math.sin(phi) * Math.cos(theta),
+            y: RADIUS * Math.sin(phi) * Math.sin(theta),
+            z: RADIUS * Math.cos(phi),
+            // Unique phase offset for subtle individual ambient breathing
+            phase: Math.random() * Math.PI * 2 
         });
-        video.srcObject = stream;
-        
-        video.onloadedmetadata = () => {
-            canvas.width = video.videoWidth;
-            canvas.height = video.videoHeight;
-            statusDiv.innerText = "Szukam samochodów...";
-            detectFrame();
-        };
-    } catch (err) {
-        statusDiv.innerText = "Błąd: " + err.message;
     }
-}
 
-async function detectFrame() {
-    if (!model || video.paused || video.ended) return;
+    // Cycle status text
+    setInterval(() => {
+        taskIndex = (taskIndex + 1) % tasks.length;
+        statusText.textContent = tasks[taskIndex];
+    }, 3200);
 
-    const predictions = await model.detect(video);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-    
-    const yLine1 = canvas.height * LINE_1_PCT;
-    const yLine2 = canvas.height * LINE_2_PCT;
-    const direction = directionInput.value;
+    // 3D Rotation Matrix math
+    function rotateX(point, angle) {
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        const y1 = point.y * cos - point.z * sin;
+        const z1 = point.z * cos + point.y * sin;
+        return { x: point.x, y: y1, z: z1, phase: point.phase };
+    }
 
-    // Rysowanie linii strefy pomiarowej
-    ctx.lineWidth = 4;
-    ctx.font = "bold 16px Arial";
-    
-    ctx.strokeStyle = (direction === 'down') ? "lime" : "red";
-    ctx.beginPath(); ctx.moveTo(0, yLine1); ctx.lineTo(canvas.width, yLine1); ctx.stroke();
-    ctx.fillStyle = ctx.strokeStyle; ctx.fillText(direction === 'down' ? "START" : "META", 10, yLine1 - 10);
-    
-    ctx.strokeStyle = (direction === 'down') ? "red" : "lime";
-    ctx.beginPath(); ctx.moveTo(0, yLine2); ctx.lineTo(canvas.width, yLine2); ctx.stroke();
-    ctx.fillStyle = ctx.strokeStyle; ctx.fillText(direction === 'down' ? "META" : "START", 10, yLine2 - 10);
+    function rotateY(point, angle) {
+        const cos = Math.cos(angle);
+        const sin = Math.sin(angle);
+        const x1 = point.x * cos + point.z * sin;
+        const z1 = point.z * cos - point.x * sin;
+        return { x: x1, y: point.y, z: z1, phase: point.phase };
+    }
 
-    // Wykrywanie aut
-    const currentCars = predictions.filter(p => ['car', 'truck', 'bus', 'motorcycle'].includes(p.class));
-    let currentFrameObjects = [];
+    // Animation Loop
+    function animate() {
+        // Clear canvas with a slight trail effect
+        ctx.fillStyle = 'rgba(5, 7, 15, 0.25)';
+        ctx.fillRect(0, 0, WIDTH, HEIGHT);
 
-    currentCars.forEach(car => {
-        const [x, y, width, height] = car.bbox;
-        const centerX = x + width / 2;
-        const centerY = y + height / 2;
+        angleX += speedX;
+        angleY += speedY;
+        pulseProgress += pulseSpeed;
+        if (pulseProgress > 2) pulseProgress = -1; // Reset pulse to come from the opposite side
 
-        ctx.strokeStyle = "#00ffff"; ctx.lineWidth = 3;
-        ctx.strokeRect(x, y, width, height);
-        ctx.fillStyle = "#00ffff"; ctx.beginPath(); ctx.arc(centerX, centerY, 6, 0, 2 * Math.PI); ctx.fill();
+        // Track points to sort them by depth (back-to-front rendering)
+        const renderedPoints = [];
 
-        currentFrameObjects.push({ centerX, centerY, bbox: car.bbox });
-    });
+        dots.forEach(dot => {
+            // Apply 3D Rotations
+            let rotated = rotateX(dot, angleX);
+            rotated = rotateY(rotated, angleY);
 
-    const now = performance.now();
-    let updatedTrackedObjects = {};
+            // 3D to 2D Perspective Projection
+            // Add distance so z is never 0 or negative
+            const distance = 500; 
+            const scale = FOV / (FOV + rotated.z + distance);
+            const x2d = CX + rotated.x * scale;
+            const y2d = CY + rotated.y * scale;
 
-    // 1. Dopasowywanie wykrytych obiektów do istniejących śladów
-    currentFrameObjects.forEach(obj => {
-        let matchId = null;
-        let minDistance = 120; // Zwiększony margines ruchu między klatkami
+            // Calculate distance to the current pulse wavefront (moving along Z-axis)
+            // Normalized z ranges from -RADIUS to +RADIUS
+            const normalizedZ = rotated.z / RADIUS; 
+            const pulseCenter = Math.sin(pulseProgress * Math.PI);
+            const distanceToPulse = Math.abs(normalizedZ - pulseCenter);
 
-        Object.keys(trackedObjects).forEach(id => {
-            const prevObj = trackedObjects[id];
-            const dist = Math.hypot(obj.centerX - prevObj.centerX, obj.centerY - prevObj.centerY);
-            if (dist < minDistance) {
-                minDistance = dist;
-                matchId = id;
+            let isPulse = false;
+            let brightness = 0;
+
+            if (distanceToPulse < 0.25) {
+                isPulse = true;
+                // Sharper peak intensity
+                brightness = Math.pow(1 - (distanceToPulse / 0.25), 2); 
             }
+
+            renderedPoints.push({
+                x: x2d,
+                y: y2d,
+                z: rotated.z,
+                scale: scale,
+                isPulse: isPulse,
+                brightness: brightness,
+                phase: rotated.phase
+            });
         });
 
-        if (matchId !== null) {
-            // Kontynuacja śledzenia starego obiektu
-            updatedTrackedObjects[matchId] = {
-                centerX: obj.centerX,
-                centerY: obj.centerY,
-                bbox: obj.bbox,
-                tStart: trackedObjects[matchId].tStart,
-                speed: trackedObjects[matchId].speed,
-                passedStart: trackedObjects[matchId].passedStart,
-                lastSeen: now
-            };
-            delete trackedObjects[matchId]; // Usuwamy z tymczasowej listy, bo zaktualizowany
-        } else {
-            // Nowy obiekt
-            updatedTrackedObjects[nextId++] = {
-                centerX: obj.centerX,
-                centerY: obj.centerY,
-                bbox: obj.bbox,
-                tStart: null,
-                speed: null,
-                passedStart: false,
-                lastSeen: now
-            };
-        }
-    });
+        // Sort by Z (descending) so background dots draw first, foreground dots overlay them
+        renderedPoints.sort((a, b) => b.z - a.z);
 
-    // 2. Przenoszenie obiektów, które zniknęły na chwilę (bufor pamięci na 10 klatek / ok. 300ms)
-    Object.keys(trackedObjects).forEach(id => {
-        const deadObj = trackedObjects[id];
-        if (now - deadObj.lastSeen < 350) { 
-            updatedTrackedObjects[id] = deadObj; 
-        }
-    });
-
-    trackedObjects = updatedTrackedObjects;
-
-    // 3. Logika obliczania prędkości dla aktualnych obiektów
-    Object.keys(trackedObjects).forEach(id => {
-        let track = trackedObjects[id];
-        
-        // Pomijamy obiekty niewidoczne w tej klatce przy rysowaniu tekstu
-        if (now - track.lastSeen > 50) return; 
-
-        // RUCH Z GÓRY DO DOŁU
-        if (direction === 'down') {
-            if (!track.passedStart && track.centerY >= yLine1 && track.centerY < yLine2) {
-                track.passedStart = true;
-                track.tStart = now;
+        // Draw the points
+        renderedPoints.forEach(p => {
+            // Base size modulated by depth + subtle ambient shimmer
+            const shimmer = Math.sin(Date.now() * 0.003 + p.phase) * 0.3;
+            let size = (p.scale * 2.5) + shimmer;
+            
+            let color;
+            if (p.isPulse) {
+                // Bright cyan/white core for the pulse wave
+                size += p.brightness * 4;
+                color = `rgba(180, 255, 255, ${0.4 + (p.brightness * 0.6)})`;
+                
+                // Draw an extra outer glow layer for pulse points
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, size * 2.5, 0, Math.PI * 2);
+                ctx.fillStyle = `rgba(0, 231, 255, ${p.brightness * 0.15})`;
+                ctx.fill();
+            } else {
+                // Standard dot color: deep cyan fading to dark blue in the back
+                const alpha = Math.max(0.15, (p.z + RADIUS) / (RADIUS * 2));
+                color = `rgba(0, 180, 216, ${alpha * 0.7})`;
             }
-            // Zmiana: ">= yLine2" zamiast idealnego trafienia. Jeśli minął linię, kończymy pomiar.
-            if (track.passedStart && track.centerY >= yLine2 && track.speed === null) {
-                calculateSpeed(track, now);
-            }
-        } 
-        // RUCH Z DOŁU DO GÓRY
-        else {
-            if (!track.passedStart && track.centerY <= yLine2 && track.centerY > yLine1) {
-                track.passedStart = true;
-                track.tStart = now;
-            }
-            if (track.passedStart && track.centerY <= yLine1 && track.speed === null) {
-                calculateSpeed(track, now);
-            }
-        }
 
-        // Wyświetlanie statusu/prędkości nad autem
-        if (track.speed) {
-            ctx.fillStyle = "#fffb00"; ctx.font = "bold 26px Arial";
-            ctx.fillText(`${track.speed} km/h`, track.bbox[0], track.bbox[1] - 12);
-        } else if (track.passedStart) {
-            ctx.fillStyle = "lime"; ctx.font = "bold 16px Arial";
-            ctx.fillText("POMIAR...", track.bbox[0], track.bbox[1] - 12);
-        }
-    });
+            ctx.beginPath();
+            ctx.arc(p.x, p.y, Math.max(0.5, size), 0, Math.PI * 2);
+            ctx.fillStyle = color;
+            ctx.fill();
+        });
 
-    requestAnimationFrame(detectFrame);
-}
+        // Central core atmospheric glow
+        const grad = ctx.createRadialGradient(CX, CY, 0, CX, CY, RADIUS);
+        grad.addColorStop(0, 'rgba(0, 231, 255, 0.03)');
+        grad.addColorStop(0.6, 'rgba(0, 92, 151, 0.01)');
+        grad.addColorStop(1, 'rgba(0,0,0,0)');
+        ctx.fillStyle = grad;
+        ctx.beginPath();
+        ctx.arc(CX, CY, RADIUS, 0, Math.PI * 2);
+        ctx.fill();
 
-function calculateSpeed(track, endTime) {
-    const durationSeconds = (endTime - track.tStart) / 1000;
-    // Ochrona przed nierealistycznie szybkim czasem (np. błąd przeskoku ramki)
-    if (durationSeconds > 0.08) { 
-        const distanceMeters = parseFloat(distanceInput.value);
-        const speedKmH = (distanceMeters / durationSeconds) * 3.6;
-        track.speed = speedKmH.toFixed(1);
+        requestAnimationFrame(animate);
     }
-}
 
-window.onload = init;
+    animate();
 </script>
+
 </body>
 </html>
